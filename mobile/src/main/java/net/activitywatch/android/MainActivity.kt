@@ -21,18 +21,9 @@ private const val TAG = "MainActivity"
 
 private fun buildBaseUrl(context: android.content.Context): String {
     val prefs = AWPreferences(context)
-    return if (prefs.useEmbeddedServer()) {
-        "http://127.0.0.1:5600"
-    } else {
-        val host = prefs.getRemoteServerHost().ifEmpty {
-            android.provider.Settings.Global.getString(
-                context.contentResolver,
-                android.provider.Settings.Global.DEVICE_NAME
-            ) ?: android.os.Build.MODEL ?: "pifi"
-        }
-        val port = prefs.getRemoteServerPort()
-        "http://$host:$port"
-    }
+    val host = prefs.getRemoteServerHost().ifEmpty { "100.120.18.23" }
+    val port = prefs.getRemoteServerPort()
+    return "http://$host:$port"
 }
 
 

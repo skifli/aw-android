@@ -27,32 +27,14 @@ class AWPreferences(context: Context) {
         editor.apply()
     }
 
-    // To check if the hostname migration has already been run
-    fun hasMigratedHostname(): Boolean {
-        return sharedPreferences.getBoolean("hasMigratedHostname", false)
-    }
-
-    // To mark the hostname migration as done so it won't run again
-    fun setHostnameMigrated() {
-        sharedPreferences.edit().putBoolean("hasMigratedHostname", true).apply()
-    }
-
-    // Whether to run the embedded Rust server inside the app
-    fun useEmbeddedServer(): Boolean {
-        return sharedPreferences.getBoolean("useEmbeddedServer", false)
-    }
-
-    fun setUseEmbeddedServer(value: Boolean) {
-        sharedPreferences.edit().putBoolean("useEmbeddedServer", value).apply()
-    }
-
-    // Remote server hostname (if empty, device name will be used)
+    // Remote server hostname
     fun getRemoteServerHost(): String {
-        return sharedPreferences.getString("remoteServerHost", "pifi") ?: "pifi"
+        val rawValue = sharedPreferences.getString("remoteServerHost", "100.120.18.23") ?: "100.120.18.23"
+        return normalizeRemoteHost(rawValue)
     }
 
     fun setRemoteServerHost(host: String) {
-        sharedPreferences.edit().putString("remoteServerHost", host).apply()
+        sharedPreferences.edit().putString("remoteServerHost", normalizeRemoteHost(host)).apply()
     }
 
     // Remote server port (default 5600)
@@ -62,5 +44,16 @@ class AWPreferences(context: Context) {
 
     fun setRemoteServerPort(port: Int) {
         sharedPreferences.edit().putInt("remoteServerPort", port).apply()
+    }
+
+    private fun normalizeRemoteHost(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return trimmed
+
+        val withoutScheme = trimmed.removePrefix("http://").removePrefix("https://")
+        val hostPortAndPath = withoutScheme.substringBefore("/")
+        val host = hostPortAndPath.substringBefore(":")
+
+        return host.ifEmpty { trimmed }
     }
 }

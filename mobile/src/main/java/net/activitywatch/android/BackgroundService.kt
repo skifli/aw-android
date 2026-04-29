@@ -19,7 +19,6 @@ private const val NOTIFICATION_ID = 1
 class BackgroundService : Service() {
 
     private lateinit var syncScheduler: SyncScheduler
-    private var rustInterface: RustInterface? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -33,30 +32,6 @@ class BackgroundService : Service() {
         createNotificationChannel()
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
-
-        // Read preferences
-        val prefs = AWPreferences(this)
-
-        // Start the server only if embedded server is enabled in preferences
-        if (prefs.useEmbeddedServer()) {
-            if (rustInterface == null) {
-                rustInterface = RustInterface(this)
-            }
-            rustInterface?.startServerTask()
-        } else {
-            Log.i(TAG, "Embedded server disabled by preferences; using remote server")
-        }
-
-        // Run hostname migration exactly once (migrates buckets with "unknown" hostname to the real device name)
-        if (prefs.useEmbeddedServer() && !prefs.hasMigratedHostname()) {
-            val server = rustInterface ?: RustInterface(this).also { rustInterface = it }
-            val hostname = server.getDeviceName(this)
-            val result = server.migrateHostname(hostname)
-            Log.i(TAG, "Hostname migration result: $result")
-            prefs.setHostnameMigrated()
-        } else if (!prefs.useEmbeddedServer()) {
-            Log.i(TAG, "Skipping hostname migration in remote-server mode")
-        }
 
         // Start the sync scheduler
         syncScheduler.start()
