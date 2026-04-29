@@ -9,6 +9,7 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     env:
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
       CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
 
@@ -24,16 +25,16 @@ jobs:
     - name: Install Android command-line tools and SDK components
       run: |
         set -e
-        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        mkdir -p "$ANDROID_HOME/cmdline-tools"
         TMPZIP=$(mktemp /tmp/cmdline-tools-XXXX.zip)
         curl -L -o "$TMPZIP" "$CMDLINE_TOOLS_URL"
         unzip -q -o "$TMPZIP" -d /tmp/cmdline-tools-unpack
         if [ -d /tmp/cmdline-tools-unpack/cmdline-tools ]; then
-          mv /tmp/cmdline-tools-unpack/cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv /tmp/cmdline-tools-unpack/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
         else
-          mv /tmp/cmdline-tools-unpack "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv /tmp/cmdline-tools-unpack "$ANDROID_HOME/cmdline-tools/latest"
         fi
-        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+        export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
         yes | sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653"
         yes | sdkmanager --licenses || true
 
@@ -44,7 +45,7 @@ jobs:
 
     - name: Build debug APK
       run: |
-        ./gradlew :mobile:assembleDebug -Pandroid.sdk.path="$ANDROID_SDK_ROOT" --no-daemon --stacktrace
+        ./gradlew :mobile:assembleDebug -Pandroid.sdk.path="$ANDROID_HOME" --no-daemon --stacktrace
 
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
