@@ -2,7 +2,7 @@ name: Android CI - Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, investigate-aw-sync ]
   workflow_dispatch:
 
 jobs:
