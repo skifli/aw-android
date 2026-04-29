@@ -42,6 +42,14 @@ class WebWatcher : AccessibilityService() {
         "com.android.chrome" to { event ->
             extractTextByViewId(event, "com.android.chrome:id/url_bar")
         },
+        "company.thebrowser.arc" to { event ->
+            // Arc Search / Arc Browser on Android (best-effort support)
+            extractTextByViewId(event, "company.thebrowser.arc:id/url_bar")
+                ?: extractTextByViewId(event, "company.thebrowser.arc:id/address_bar")
+                ?: extractTextByViewId(event, "company.thebrowser.arc:id/omnibox")
+                ?: extractTextByViewId(event, "company.thebrowser.arc:id/location_bar")
+                ?: extractTextByViewId(event, "company.thebrowser.arc:id/location_bar_edit_text", transformer = stripProtocol)
+        },
         "org.mozilla.firefox" to { event ->
             // Firefox has multiple variants depending on version
             extractTextByViewId(event, "org.mozilla.firefox:id/url_bar_title")
