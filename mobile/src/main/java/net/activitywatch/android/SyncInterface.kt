@@ -14,6 +14,7 @@ private const val TAG = "SyncInterface"
 class SyncInterface(context: Context) {
     private val appContext: Context = context.applicationContext
     private val syncDir: String
+    private var nativeAvailable = false
     
     init {
         // Use Downloads folder for easy user access: /sdcard/Download/ActivityWatch/
@@ -35,15 +36,21 @@ class SyncInterface(context: Context) {
         // Create sync directory if it doesn't exist
         File(syncDir).mkdirs()
         
-        System.loadLibrary("aw_sync")
-        Log.i(TAG, "aw-sync initialized with sync dir: $syncDir")
+        try {
+            System.loadLibrary("aw_sync")
+            nativeAvailable = true
+            Log.i(TAG, "aw-sync initialized with sync dir: $syncDir")
+        } catch (e: UnsatisfiedLinkError) {
+            nativeAvailable = false
+            Log.e(TAG, "libaw_sync is not available; running sync in no-op mode", e)
+        }
     }
     
     // Native JNI functions
-    private external fun syncPullAll(port: Int, hostname: String): String
-    private external fun syncPull(port: Int, hostname: String): String
-    private external fun syncPush(port: Int, hostname: String): String
-    private external fun syncBoth(port: Int, hostname: String): String
+    private external fun nativeSyncPullAll(port: Int, hostname: String): String
+    private external fun nativeSyncPull(port: Int, hostname: String): String
+    private external fun nativeSyncPush(port: Int, hostname: String): String
+    private external fun nativeSyncBoth(port: Int, hostname: String): String
     external fun getSyncDir(): String
     
     private fun getDeviceName(): String {
@@ -55,31 +62,43 @@ class SyncInterface(context: Context) {
     
     // Async wrapper for syncPullAll
     fun syncPullAllAsync(callback: (Boolean, String) -> Unit) {
+        if (!nativeAvailable) {
+            callback(false, "aw-sync unavailable")
+            return
+        }
         val prefs = AWPreferences(appContext)
         val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
         val port = prefs.getRemoteServerPort()
         performSyncAsync("Pull All", callback) {
-            syncPullAll(port, hostname)
+            nativeSyncPullAll(port, hostname)
         }
     }
     
     // Async wrapper for syncPush
     fun syncPushAsync(callback: (Boolean, String) -> Unit) {
+        if (!nativeAvailable) {
+            callback(false, "aw-sync unavailable")
+            return
+        }
         val prefs = AWPreferences(appContext)
         val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
         val port = prefs.getRemoteServerPort()
         performSyncAsync("Push", callback) {
-            syncPush(port, hostname)
+            nativeSyncPush(port, hostname)
         }
     }
     
     // Async wrapper for syncBoth
     fun syncBothAsync(callback: (Boolean, String) -> Unit) {
+        if (!nativeAvailable) {
+            callback(false, "aw-sync unavailable")
+            return
+        }
         val prefs = AWPreferences(appContext)
         val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
         val port = prefs.getRemoteServerPort()
         performSyncAsync("Full Sync", callback) {
-            syncBoth(port, hostname)
+            nativeSyncBoth(port, hostname)
         }
     }
     

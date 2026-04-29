@@ -18,21 +18,28 @@ private const val TAG = "RustInterface"
 class RustInterface(context: Context? = null) {
 
     private val appContext: Context? = context?.applicationContext
+    private var nativeAvailable = false
 
     init {
         // NOTE: This doesn't work, probably because I can't get gradle to not strip symbols on
         // release builds
-        Os.setenv("RUST_BACKTRACE", "1", true)
+        try {
+            Os.setenv("RUST_BACKTRACE", "1", true)
 
-        if (context != null) {
-            Os.setenv("SQLITE_TMPDIR", context.cacheDir.absolutePath, true)
-        }
+            if (context != null) {
+                Os.setenv("SQLITE_TMPDIR", context.cacheDir.absolutePath, true)
+            }
 
-        System.loadLibrary("aw_server")
+            System.loadLibrary("aw_server")
+            nativeAvailable = true
 
-        initialize()
-        if (context != null) {
-            setDataDir(context.filesDir.absolutePath)
+            nativeInitialize()
+            if (context != null) {
+                nativeSetDataDir(context.filesDir.absolutePath)
+            }
+        } catch (e: UnsatisfiedLinkError) {
+            nativeAvailable = false
+            Log.e(TAG, "libaw_server is not available; running in no-op mode", e)
         }
     }
 
@@ -40,23 +47,27 @@ class RustInterface(context: Context? = null) {
         var serverStarted = false
     }
 
-    private external fun initialize(): String
-    private external fun greeting(pattern: String): String
-    private external fun startServer()
-    private external fun setDataDir(path: String)
-    external fun getBuckets(): String
-    external fun createBucket(bucket: String): String
-    external fun getEvents(bucket_id: String, limit: Int): String
-    external fun heartbeat(bucket_id: String, event: String, pulsetime: Double): String
-    external fun query(query: String, timeperiods: String): String
-    external fun androidQuery(timeperiods: String): String
-    external fun migrateHostname(hostname: String): String
+    private external fun nativeInitialize(): String
+    private external fun nativeGreeting(pattern: String): String
+    private external fun nativeStartServer()
+    private external fun nativeSetDataDir(path: String)
+    private external fun nativeGetBuckets(): String
+    private external fun nativeCreateBucket(bucket: String): String
+    private external fun nativeGetEvents(bucket_id: String, limit: Int): String
+    private external fun nativeHeartbeat(bucket_id: String, event: String, pulsetime: Double): String
+    private external fun nativeQuery(query: String, timeperiods: String): String
+    private external fun nativeAndroidQuery(timeperiods: String): String
+    private external fun nativeMigrateHostname(hostname: String): String
 
     fun sayHello(to: String): String {
-        return greeting(to)
+        return if (nativeAvailable) nativeGreeting(to) else ""
     }
 
     fun startServerTask() {
+        if (!nativeAvailable) {
+            Log.w(TAG, "Skipping startServerTask because libaw_server is unavailable")
+            return
+        }
         if (!serverStarted) {
             // check if port 5600 is already in use
             try {
@@ -75,7 +86,7 @@ class RustInterface(context: Context? = null) {
 
                 // Start server
                 Log.w(TAG, "Starting server...")
-                startServer()
+                nativeStartServer()
 
                 handler.post {
                     // will run on UI thread after the task is done
@@ -88,6 +99,10 @@ class RustInterface(context: Context? = null) {
     }
 
     fun createBucketHelper(bucket_id: String, type: String, client: String = "aw-android") {
+        if (!nativeAvailable) {
+            Log.w(TAG, "Skipping createBucketHelper($bucket_id) because libaw_server is unavailable")
+            return
+        }
         val context =
             appContext
                 ?: throw IllegalStateException(
@@ -98,7 +113,7 @@ class RustInterface(context: Context? = null) {
             Log.i(TAG, "Bucket with ID '$bucket_id', already existed. Not creating.")
         } else {
             val msg =
-                createBucket(
+                nativeCreateBucket(
                     """{"id": "$bucket_id", "type": "$type", "hostname": "$hostname", "client": "$client"}"""
                 )
             Log.w(TAG, msg)
@@ -130,8 +145,12 @@ class RustInterface(context: Context? = null) {
         data: JSONObject,
         pulsetime: Double = 60.0
     ) {
+        if (!nativeAvailable) {
+            Log.w(TAG, "Skipping heartbeatHelper($bucket_id) because libaw_server is unavailable")
+            return
+        }
         val event = Event(timestamp, duration, data)
-        val msg = heartbeat(bucket_id, event.toString(), pulsetime)
+        val msg = nativeHeartbeat(bucket_id, event.toString(), pulsetime)
         // Log.w(TAG, msg)
     }
 
@@ -147,14 +166,21 @@ class RustInterface(context: Context? = null) {
      * @param data Event metadata (app name, package, etc.)
      */
     fun insertEvent(bucket_id: String, timestamp: Instant, duration: Double, data: JSONObject) {
+        if (!nativeAvailable) {
+            Log.w(TAG, "Skipping insertEvent($bucket_id) because libaw_server is unavailable")
+            return
+        }
         val event = Event(timestamp, duration, data)
-        val msg = heartbeat(bucket_id, event.toString(), 0.0)
+        val msg = nativeHeartbeat(bucket_id, event.toString(), 0.0)
         Log.d(TAG, "insertEvent response: $msg")
     }
 
     fun getBucketsJSON(): JSONObject {
         // TODO: Handle errors
-        val json = JSONObject(getBuckets())
+        if (!nativeAvailable) {
+            return JSONObject()
+        }
+        val json = JSONObject(nativeGetBuckets())
         if (json.length() <= 0) {
             Log.w(TAG, "Length: ${json.length()}")
         }
@@ -163,7 +189,10 @@ class RustInterface(context: Context? = null) {
 
     fun getEventsJSON(bucket_id: String, limit: Int = 0): JSONArray {
         // TODO: Handle errors
-        val result = getEvents(bucket_id, limit)
+        if (!nativeAvailable) {
+            return JSONArray()
+        }
+        val result = nativeGetEvents(bucket_id, limit)
         return try {
             JSONArray(result)
         } catch (e: JSONException) {
@@ -179,21 +208,25 @@ class RustInterface(context: Context? = null) {
 
     fun test() {
         // TODO: Move to instrumented test
+        if (!nativeAvailable) {
+            Log.w(TAG, "Skipping test() because libaw_server is unavailable")
+            return
+        }
         Log.w(TAG, sayHello("Android"))
         createBucketHelper("test", "test")
         Log.w(TAG, getBucketsJSON().toString(2))
 
         val event = """{"timestamp": "${Instant.now()}", "duration": 0, "data": {"key": "value"}}"""
         Log.w(TAG, event)
-        Log.w(TAG, heartbeat("test", event, 60.0))
+        Log.w(TAG, nativeHeartbeat("test", event, 60.0))
         Log.w(TAG, getBucketsJSON().toString(2))
         Log.w(TAG, getBucketsJSON().toString(2))
         Log.w(TAG, getEventsJSON("test").toString(2))
         val timeintervals = "[\"2026-01-31T00:00:00+03:00/2026-01-31T23:59:59+03:00\"]"
-        Log.w(TAG, query("events = query_bucket(\"test\"); RETURN = events;", timeintervals))
+        Log.w(TAG, nativeQuery("events = query_bucket(\"test\"); RETURN = events;", timeintervals))
 
         // Test androidQuery (queries aw-watcher-android-test bucket)
         Log.w(TAG, "Testing androidQuery for Jan 31, 2026")
-        Log.w(TAG, androidQuery(timeintervals))
+        Log.w(TAG, nativeAndroidQuery(timeintervals))
     }
 }
