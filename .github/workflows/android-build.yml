@@ -43,6 +43,10 @@ jobs:
         java -version || true
         sdkmanager --version || true
 
+    - name: Configure Android SDK path
+      run: |
+        printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+
     - name: Build debug APK
       run: |
         ./gradlew :mobile:assembleDebug -Pandroid.sdk.path="$ANDROID_HOME" --no-daemon --stacktrace
