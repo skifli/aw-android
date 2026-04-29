@@ -65,6 +65,7 @@ class OnboardingActivity : AppCompatActivity() {
                 // First, check if the user has granted the usage permission
                 if(UsageStatsWatcher.isUsageAllowed(this)) {
                     AWPreferences(this).setFirstTimeRunFlag()
+                    startActivity(Intent(this, MainActivity::class.java))
                     finish()
                 } else {
                     // Show a snackbar and don't finish the activity

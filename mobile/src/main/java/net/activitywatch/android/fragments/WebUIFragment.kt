@@ -36,6 +36,17 @@ private const val ARG_URL = "url"
 class WebUIFragment : Fragment() {
     // TODO: Rename and change types of parameters
     private var listener: OnFragmentInteractionListener? = null
+    private var baseUrl: String? = null
+
+    private fun isInternalUrl(url: String?): Boolean {
+        val currentBase = baseUrl ?: return false
+        val base = Uri.parse(currentBase)
+        val target = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+
+        return base.scheme == target.scheme &&
+            base.host == target.host &&
+            base.port == target.port
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -52,6 +63,7 @@ class WebUIFragment : Fragment() {
         }
 
         val myWebView: WebView = view.findViewById(R.id.webview) as WebView
+        baseUrl = arguments?.getString(ARG_URL)
 
         class MyWebViewClient : WebViewClient() {
             override fun onReceivedError(
@@ -74,7 +86,7 @@ class WebUIFragment : Fragment() {
                 val url = request?.url.toString()
                 if (URLUtil.isNetworkUrl(url)) {
                     if (url.startsWith("http://") || url.startsWith("https://")) {
-                        if (!url.contains("//localhost:")) {
+                        if (!isInternalUrl(url) && !url.contains("//localhost:")) {
                             // Open the URL in an external browser
                             val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                             startActivity(i)

@@ -19,7 +19,21 @@ import net.activitywatch.android.watcher.UsageStatsWatcher
 
 private const val TAG = "MainActivity"
 
-const val baseURL = "http://127.0.0.1:5600"
+private fun buildBaseUrl(context: android.content.Context): String {
+    val prefs = AWPreferences(context)
+    return if (prefs.useEmbeddedServer()) {
+        "http://127.0.0.1:5600"
+    } else {
+        val host = prefs.getRemoteServerHost().ifEmpty {
+            android.provider.Settings.Global.getString(
+                context.contentResolver,
+                android.provider.Settings.Global.DEVICE_NAME
+            ) ?: android.os.Build.MODEL ?: "pifi"
+        }
+        val port = prefs.getRemoteServerPort()
+        "http://$host:$port"
+    }
+}
 
 
 class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelectedListener, WebUIFragment.OnFragmentInteractionListener {
@@ -45,6 +59,8 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             Log.i(TAG, "First time or usage not allowed, starting onboarding activity")
             val intent = Intent(this, OnboardingActivity::class.java)
             startActivity(intent)
+            finish()
+            return
         }
 
         // Set up UI
@@ -65,7 +81,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         if (savedInstanceState != null) {
             return
         }
-        val firstFragment = WebUIFragment.newInstance(baseURL)
+        val firstFragment = WebUIFragment.newInstance(buildBaseUrl(this))
         supportFragmentManager.beginTransaction()
             .add(R.id.fragment_container, firstFragment).commit()
 
@@ -124,15 +140,15 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
             }
             R.id.nav_activity -> {
                 fragmentClass = WebUIFragment::class.java
-                url = "$baseURL/#/activity/unknown/"
+                url = "${buildBaseUrl(this)}/#/activity/unknown/"
             }
             R.id.nav_buckets -> {
                 fragmentClass = WebUIFragment::class.java
-                url = "$baseURL/#/buckets/"
+                url = "${buildBaseUrl(this)}/#/buckets/"
             }
             R.id.nav_settings -> {
                 fragmentClass = WebUIFragment::class.java
-                url = "$baseURL/#/settings/"
+                url = "${buildBaseUrl(this)}/#/settings/"
             }
             R.id.nav_share -> {
                 Snackbar.make(binding.coordinatorLayout, "The share button was clicked, but it's not yet implemented!", Snackbar.LENGTH_LONG)
