@@ -36,4 +36,31 @@ class AWPreferences(context: Context) {
     fun setHostnameMigrated() {
         sharedPreferences.edit().putBoolean("hasMigratedHostname", true).apply()
     }
+
+    // Whether to run the embedded Rust server inside the app
+    fun useEmbeddedServer(): Boolean {
+        return sharedPreferences.getBoolean("useEmbeddedServer", false)
+    }
+
+    fun setUseEmbeddedServer(value: Boolean) {
+        sharedPreferences.edit().putBoolean("useEmbeddedServer", value).apply()
+    }
+
+    // Remote server hostname (if empty, device name will be used)
+    fun getRemoteServerHost(): String {
+        return sharedPreferences.getString("remoteServerHost", "pifi") ?: "pifi"
+    }
+
+    fun setRemoteServerHost(host: String) {
+        sharedPreferences.edit().putString("remoteServerHost", host).apply()
+    }
+
+    // Remote server port (default 5600)
+    fun getRemoteServerPort(): Int {
+        return sharedPreferences.getInt("remoteServerPort", 5600)
+    }
+
+    fun setRemoteServerPort(port: Int) {
+        sharedPreferences.edit().putInt("remoteServerPort", port).apply()
+    }
 }

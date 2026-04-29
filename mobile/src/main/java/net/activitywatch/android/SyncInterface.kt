@@ -55,25 +55,31 @@ class SyncInterface(context: Context) {
     
     // Async wrapper for syncPullAll
     fun syncPullAllAsync(callback: (Boolean, String) -> Unit) {
-        val hostname = getDeviceName()
+        val prefs = AWPreferences(appContext)
+        val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
+        val port = prefs.getRemoteServerPort()
         performSyncAsync("Pull All", callback) {
-            syncPullAll(5600, hostname)
+            syncPullAll(port, hostname)
         }
     }
     
     // Async wrapper for syncPush
     fun syncPushAsync(callback: (Boolean, String) -> Unit) {
-        val hostname = getDeviceName()
+        val prefs = AWPreferences(appContext)
+        val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
+        val port = prefs.getRemoteServerPort()
         performSyncAsync("Push", callback) {
-            syncPush(5600, hostname)
+            syncPush(port, hostname)
         }
     }
     
     // Async wrapper for syncBoth
     fun syncBothAsync(callback: (Boolean, String) -> Unit) {
-        val hostname = getDeviceName()
+        val prefs = AWPreferences(appContext)
+        val hostname = prefs.getRemoteServerHost().ifEmpty { getDeviceName() }
+        val port = prefs.getRemoteServerPort()
         performSyncAsync("Full Sync", callback) {
-            syncBoth(5600, hostname)
+            syncBoth(port, hostname)
         }
     }
     

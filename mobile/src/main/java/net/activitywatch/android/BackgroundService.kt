@@ -35,11 +35,17 @@ class BackgroundService : Service() {
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
 
-        // Start the server
-        rustInterface.startServerTask()
+        // Read preferences
+        val prefs = AWPreferences(this)
+
+        // Start the server only if embedded server is enabled in preferences
+        if (prefs.useEmbeddedServer()) {
+            rustInterface.startServerTask()
+        } else {
+            Log.i(TAG, "Embedded server disabled by preferences; using remote server")
+        }
 
         // Run hostname migration exactly once (migrates buckets with "unknown" hostname to the real device name)
-        val prefs = AWPreferences(this)
         if (!prefs.hasMigratedHostname()) {
             val hostname = rustInterface.getDeviceName(this)
             val result = rustInterface.migrateHostname(hostname)
