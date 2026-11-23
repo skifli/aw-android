@@ -118,20 +118,12 @@ class BackgroundService : Service() {
         // case isFullyStarted is false and we fall through to run the complete startup path
         // (server start, event parsing, notify scheduling) before honouring the toggle.
         if (intent?.action == ACTION_SYNC_ENABLED_CHANGED && isFullyStarted) {
-            val enabled = AWPreferences(this).isSyncEnabled()
-            Log.i(TAG, "Sync enabled changed to $enabled; ${if (enabled) "starting" else "stopping"} scheduler")
-            if (enabled) syncScheduler.start() else syncScheduler.stop()
+            Log.i(TAG, "Ignoring file-sync toggle in direct-to-Pifi mode")
+            syncScheduler.stop()
             return BACKGROUND_SERVICE_RESTART_MODE
         }
 
         Log.i(TAG, "BackgroundService started")
-
-        // Ensure the API key is written to config.toml before the server reads it.
-        // MainActivity does this when the user launches the app normally, but
-        // BackgroundService is also started on BOOT_COMPLETED (via SyncAlarmReceiver)
-        // without ever going through MainActivity, so we need to guarantee the key
-        // exists here as well.
-        ensureDashboardApiKey(this)
 
         val prefs = AWPreferences(this)
         // The sync-folder migration traverses the sync tree, which can ANR startup
@@ -165,42 +157,21 @@ class BackgroundService : Service() {
             }
         }
 
-        // Run hostname + legacy-bucket migrations off the main thread — both are blocking JNI.
-        // Only mark as migrated on success so a retry is possible if the server wasn't ready yet.
-        // Watcher-bucket migration must follow hostname migration so IDs are stable first.
-        val needsHostnameMigration = !prefs.hasMigratedHostname()
-        val needsWatcherBucketMigration = !prefs.hasMigratedWatcherAndroidBucketNames()
+        // Bucket identity and history live on Pifi. The phone has no local buckets to migrate.
+        prefs.setHostnameMigrated()
+        prefs.setWatcherAndroidBucketNamesMigrated()
         val needsNotifyOptInMigration = !prefs.hasMigratedNotifyOptIn()
-        if ((needsHostnameMigration || needsWatcherBucketMigration || needsNotifyOptInMigration) &&
-            !migrationsQueued) {
+        if (needsNotifyOptInMigration && !migrationsQueued) {
             migrationsQueued = true
             CoroutineScope(Dispatchers.IO).launch {
                 val ri = awaitRustInterface() ?: return@launch
-                if (needsHostnameMigration) {
-                    val hostname = ri.getDeviceName(this@BackgroundService)
-                    val result = ri.migrateHostname(hostname)
-                    Log.i(TAG, "Hostname migration result: $result")
-                    if (migrationSucceeded(result, "Migrated hostname for", "Hostname")) {
-                        prefs.setHostnameMigrated()
-                    }
-                }
-                if (needsWatcherBucketMigration) {
-                    migrateWatcherAndroidTestBuckets(prefs, ri)
-                }
-                if (needsNotifyOptInMigration) {
-                    migrateNotifyOptIn(prefs, ri)
-                }
+                migrateNotifyOptIn(prefs, ri)
             }
         }
 
-        // Start the sync scheduler only when the user has enabled sync.
-        // Default is off — the sync directory is not accessible to other apps
-        // (Android scoped storage), so auto-sync would silently no-op for most users.
-        if (prefs.isSyncEnabled()) {
-            syncScheduler.start()
-        } else {
-            Log.i(TAG, "Sync is disabled (default). Enable it in settings to start syncing.")
-        }
+        syncScheduler.stop()
+        RemoteRequestQueue.schedulePeriodic(this)
+        Log.i(TAG, "File sync is disabled in direct-to-Pifi mode")
 
         // Schedule event parsing
         scheduleEventParsing()
@@ -215,8 +186,7 @@ class BackgroundService : Service() {
     }
 
     /**
-     * Fold leftover sync folders named after legacy (unsanitized) hostnames into the
-     * current one. Bucket hostnames in sqlite.db are rewritten by [DatastoreStartup].
+     * Fold leftover local sync folders named after legacy hostnames into the current one.
      */
     private fun migrateSanitizedSyncFolders() {
         val current = deviceHostname(this)

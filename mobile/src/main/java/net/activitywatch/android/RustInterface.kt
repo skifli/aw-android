@@ -1,343 +1,166 @@
 package net.activitywatch.android
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Handler
-import android.os.Looper
-import android.system.Os
 import android.util.Log
-import java.util.concurrent.Executors
 import net.activitywatch.android.models.Event
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import org.threeten.bp.Instant
 
-private const val TAG = "RustInterface"
+private const val TAG = "RemoteRustInterface"
 
-internal enum class PortProbe {
-    FREE,
-    IN_USE,
-    SOCKET_DENIED,
-}
-
-/**
- * Check whether the local server can listen on [port] before handing it to Rust.
- *
- * A port held by another process throws [java.net.BindException]. Being unable
- * to create a socket at all throws its parent [java.net.SocketException]
- * instead: GrapheneOS's per-app Network permission makes `socket()` fail with
- * EACCES (ActivityWatch/activitywatch#1003). Only the former used to be caught,
- * so the latter escaped the IO coroutine in BackgroundService and killed the
- * app at startup.
- */
-internal fun probeServerPort(
-    port: Int,
-    open: (Int) -> java.io.Closeable = { java.net.ServerSocket(it) },
-    onDenied: (Exception) -> Unit = { Log.w(TAG, "Socket probe on port $port failed", it) },
-): PortProbe =
-    try {
-        open(port).close()
-        PortProbe.FREE
-    } catch (e: java.net.BindException) {
-        PortProbe.IN_USE
-    } catch (e: java.io.IOException) {
-        onDenied(e)
-        PortProbe.SOCKET_DENIED
-    } catch (e: SecurityException) {
-        onDenied(e)
-        PortProbe.SOCKET_DENIED
-    }
-
-/**
- * The error in the response to a datastore write, or null if the write succeeded.
- *
- * A response is a failure when it is an `{"error": …}` object, or when it is missing:
- * without a response nothing confirms that the write happened. Any other response is
- * a success.
- */
-internal fun writeErrorOf(response: String?): String? {
-    if (response == null) return "no response from the datastore"
-    if (!response.startsWith("{")) return null
-    return try {
-        JSONObject(response).opt("error") as? String
-    } catch (e: JSONException) {
-        null
-    }
-}
-
-/**
- * Logs failed datastore writes: the first failure of a run, then how many failed once
- * a write to the same bucket succeeds again.
- *
- * Only the start and the end of a run are logged: a write can come every few seconds,
- * and a line for each failure would flood logcat.
- *
- * Runs are counted per bucket, so a success in one bucket does not end a run of
- * failures in another.
- */
-internal class WriteFailureLog(private val log: (String) -> Unit = { Log.w(TAG, it) }) {
-    private val failedInARow = HashMap<String, Int>()
-
-    // Synchronized so that one instance can be shared by writers on several threads.
-    @Synchronized
-    fun record(bucketId: String, response: String?) {
-        val error = writeErrorOf(response)
-        val failed = failedInARow[bucketId] ?: 0
-        if (error != null) {
-            if (failed == 0) log("Writes to bucket '$bucketId' are failing: $error")
-            failedInARow[bucketId] = failed + 1
-        } else if (failed > 0) {
-            failedInARow.remove(bucketId)
-            val writes = if (failed == 1) "write" else "writes"
-            log("Writes to bucket '$bucketId' succeed again after $failed failed $writes")
-        }
-    }
-}
-
+/** Compatibility facade for upstream watchers, backed by the Pifi REST API instead of a local
+ * aw-server-rust instance. Keep the upstream class/API shape so its Android watchers can be used. */
 class RustInterface(context: Context? = null) {
-
-    private val appContext: Context? = context?.applicationContext
-
-    init {
-        // Never touch the datastore while the bucket-hostname rewrite has sqlite.db open
-        // through Android's SQLite (see DatastoreStartup).
-        DatastoreStartup.awaitReady()
-
-        // NOTE: This doesn't work, probably because I can't get gradle to not strip symbols on
-        // release builds
-        Os.setenv("RUST_BACKTRACE", "1", true)
-
-        if (context != null) {
-            Os.setenv("SQLITE_TMPDIR", context.cacheDir.absolutePath, true)
-        }
-
-        System.loadLibrary("aw_server")
-
-        initialize()
-        if (context != null) {
-            setDataDir(context.filesDir.absolutePath)
-            appVersionString(context)?.let { setVersionOverride(it) }
-            // OS gethostname() is localhost on Android; buckets already use
-            // deviceHostname(). Without this, /api/0/info never matches the
-            // webui "this device" badge (ActivityWatch/aw-android#368).
-            setHostnameOverride(deviceHostname(context))
-        }
-    }
-
-    /**
-     * The version to report from `GET /api/0/info`, which the webui footer shows.
-     *
-     * Without an override the server reports the aw-server-rust package version,
-     * which is the version of a component rather than of the app the user
-     * installed: the footer read `v0.14.0 (rust)` on a `v0.14.0b2` install.
-     *
-     * The `(rust)` suffix is kept deliberately — aw-webui checks the version
-     * string for it to decide whether to offer the API browser link, which
-     * aw-server-rust does not serve.
-     *
-     * Returns null if the version can't be read, leaving the server's default.
-     */
-    private fun appVersionString(context: Context): String? {
-        return try {
-            val versionName =
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-                    ?: return null
-            "v$versionName (rust)"
-        } catch (e: PackageManager.NameNotFoundException) {
-            Log.w(TAG, "Could not read the app's own version, reporting the server's", e)
-            null
-        }
-    }
-
-    companion object {
-        // @Volatile so the check in startServerTask() is visible across threads
-        // without requiring callers to be inside a synchronized block.
-        @Volatile var serverStarted = false
-
-        // One for the whole process, like the datastore it reports on, so that a run of
-        // failures outlives the RustInterface instances that write during it.
-        private val writeFailures = WriteFailureLog()
-    }
-
-    private external fun initialize()
-    private external fun greeting(pattern: String): String
-    private external fun startServer(port: Int)
-    private external fun setDataDir(path: String)
-    private external fun setVersionOverride(version: String)
-    private external fun setHostnameOverride(hostname: String)
-    external fun getBuckets(): String
-    external fun createBucket(bucket: String): String
-    external fun getEvents(bucket_id: String, limit: Int): String
-    // Null when the native side cannot build even its error object.
-    external fun heartbeat(bucket_id: String, event: String, pulsetime: Double): String?
-    external fun query(query: String, timeperiods: String): String
-    external fun androidQuery(timeperiods: String): String
-    external fun getSetting(key: String): String
-    external fun setSetting(key: String, value: String): String
-    external fun migrateHostname(hostname: String): String
-    external fun migrateWatcherAndroidBucketNames(): String
-
-    fun sayHello(to: String): String {
-        return greeting(to)
-    }
+    private val appContext = context?.applicationContext
 
     fun startServerTask() {
-        // Synchronize the check-and-set so two concurrent onStartCommand invocations
-        // (e.g. BOOT_COMPLETED and a MainActivity launch racing on a fresh install)
-        // cannot both pass the !serverStarted guard before either sets the flag.
-        // @Volatile on serverStarted also makes the flag visible to callers that
-        // read it outside this lock (e.g. BackgroundService.migrateSanitizedHostnameIdentity).
-        // Lock on Companion, not `this`: serverStarted is shared by every RustInterface
-        // instance, so a per-instance lock would not stop two instances racing.
-        synchronized(Companion) {
-            if (serverStarted) {
-                Log.i(TAG, "Server already started, skipping")
-                return
-            }
-            when (probeServerPort(BuildConfig.SERVER_PORT)) {
-                PortProbe.FREE -> {}
-                PortProbe.IN_USE -> {
-                    Log.e(
-                        TAG,
-                        "Port ${BuildConfig.SERVER_PORT} is already in use, server probably already started"
-                    )
-                    return
-                }
-                PortProbe.SOCKET_DENIED -> {
-                    Log.e(
-                        TAG,
-                        "Cannot open a socket on port ${BuildConfig.SERVER_PORT}; not starting the " +
-                            "server. On GrapheneOS, check that the app's Network permission is enabled."
-                    )
-                    return
-                }
-            }
-            serverStarted = true
+        // Remote-client build: Pifi owns the ActivityWatch server and datastore.
+        Log.i(TAG, "Using remote ActivityWatch server on Pifi; no on-device server is started")
+    }
+
+    fun getBuckets(): String = RemoteAwApi.request("GET", "/api/0/buckets/")
+
+    fun createBucket(bucket: String): String = try {
+        val body = JSONObject(bucket)
+        val id = body.getString("id")
+        writeOrQueue("POST", RemoteAwApi.bucketPath(id), body.toString(), "create bucket $id")
+    } catch (e: Exception) {
+        RemoteAwApi.logFailure("Create bucket", e)
+        "error: ${e.message}"
+    }
+
+    fun getEvents(bucket_id: String, limit: Int): String {
+        val suffix = if (limit > 0) "?limit=$limit" else ""
+        return RemoteAwApi.request("GET", "${RemoteAwApi.bucketPath(bucket_id)}/events$suffix")
+    }
+
+    fun heartbeat(bucket_id: String, event: String, pulsetime: Double): String =
+        try {
+            val pulse = if (pulsetime == pulsetime.toLong().toDouble()) pulsetime.toLong().toString() else pulsetime.toString()
+            writeOrQueue(
+                "POST",
+                "${RemoteAwApi.bucketPath(bucket_id)}/heartbeat?pulsetime=$pulse",
+                event,
+                "write event to $bucket_id",
+            )
+        } catch (e: Exception) {
+            RemoteAwApi.logFailure("Write event to $bucket_id", e)
+            "error: ${e.message}"
         }
 
-        val executor = Executors.newSingleThreadExecutor()
-        val handler = Handler(Looper.getMainLooper())
-        executor.execute {
-            // will not block the UI thread
-            try {
-                // Start server
-                Log.w(TAG, "Starting server on port ${BuildConfig.SERVER_PORT}...")
-                startServer(BuildConfig.SERVER_PORT)
-            } finally {
-                // Reset unconditionally, including when startServer() throws
-                // (JNI/native failure): otherwise serverStarted stays true and
-                // startServerTask() never restarts the server until process death.
-                handler.post {
-                    // will run on UI thread after the task is done
-                    Log.i(TAG, "Server finished")
-                    serverStarted = false
-                }
-            }
-        }
-        Log.w(TAG, "Server started")
+    fun query(query: String, timeperiods: String): String = RemoteAwApi.query(query, timeperiods)
+
+    /** The upstream widget query is local Rust code. In remote mode issue the equivalent query
+     * against Pifi; this preserves total-use data while leaving category rules to Pifi's Web UI. */
+    fun androidQuery(timeperiods: String): String {
+        val query = """
+            events = flood(query_bucket(find_bucket("aw-watcher-android")));
+            events = merge_events_by_keys(events, ["app"]);
+            duration = sum_durations(events);
+            cat_events = [];
+            RETURN = {"events": events, "duration": duration, "cat_events": cat_events};
+        """.trimIndent()
+        return query(query, timeperiods)
     }
+
+    fun getSetting(key: String): String =
+        RemoteAwApi.request("GET", "/api/0/settings/${android.net.Uri.encode(key)}")
+
+    fun setSetting(key: String, value: String): String = try {
+        val path = "/api/0/settings/${android.net.Uri.encode(key)}"
+        val result = writeOrQueue("POST", path, value, "write setting $key")
+        if (result == "queued" || result.startsWith("error:")) result else "ok"
+    } catch (e: Exception) {
+        RemoteAwApi.logFailure("Write setting $key", e)
+        "error: ${e.message}"
+    }
+
+    fun migrateHostname(hostname: String): String =
+        "Remote mode: bucket hostnames are managed by Pifi; no local migration needed"
+
+    fun migrateWatcherAndroidBucketNames(): String =
+        "Remote mode: legacy bucket migration is skipped"
+
+    fun sayHello(to: String): String = "Hello, $to!"
 
     fun createBucketHelper(bucket_id: String, type: String, client: String = "aw-android") {
-        createBucketsHelper(mapOf(bucket_id to type), client)
-    }
-
-    /** Creates any of [buckets] (id to type) that don't exist yet, listing buckets once. */
-    fun createBucketsHelper(buckets: Map<String, String>, client: String = "aw-android") {
-        val context =
-            appContext
-                ?: throw IllegalStateException(
-                    "Context is required but was not provided during initialization"
-                )
-        val hostname = getDeviceName(context)
-        val existing = try {
-            getBucketsJSON().keys().asSequence().toSet()
-        } catch (e: JSONException) {
-            Log.e(TAG, "Not creating buckets ${buckets.keys}: ${e.message}")
-            return
-        }
-        for ((bucket_id, type) in buckets) {
-            if (bucket_id in existing) {
-                Log.i(TAG, "Bucket with ID '$bucket_id', already existed. Not creating.")
-            } else {
-                val msg =
-                    createBucket(
-                        """{"id": "$bucket_id", "type": "$type", "hostname": "$hostname", "client": "$client"}"""
-                    )
-                Log.w(TAG, msg)
-            }
+        val context = appContext ?: throw IllegalStateException("Context is required to create an ActivityWatch bucket")
+        try {
+            if (getBucketsJSON().has(bucket_id)) return
+            val bucket = JSONObject()
+                .put("id", bucket_id)
+                .put("type", type)
+                .put("hostname", getDeviceName(context))
+                .put("client", client)
+            val response = createBucket(bucket.toString())
+            Log.i(TAG, "Created remote bucket $bucket_id: $response")
+        } catch (e: Exception) {
+            RemoteAwApi.logFailure("Create bucket $bucket_id", e)
         }
     }
 
-    /**
-     * Send a heartbeat event that may be merged with nearby events.
-     *
-     * Heartbeats are useful for:
-     * - Live tracking where events are sent continuously
-     * - Situations where event merging is desired
-     *
-     * However, for app usage tracking, heartbeats can cause data loss due to:
-     * - Events being merged incorrectly
-     * - Zero-duration events being created
-     * - Significant underreporting (up to 97% data loss observed)
-     *
-     * @param bucket_id The bucket to send the heartbeat to
-     * @param timestamp The event timestamp
-     * @param duration The event duration in seconds
-     * @param data Event metadata
-     * @param pulsetime Time window for merging events (default: 60 seconds)
-     */
     fun heartbeatHelper(
         bucket_id: String,
         timestamp: Instant,
         duration: Double,
         data: JSONObject,
-        pulsetime: Double = 60.0
+        pulsetime: Double = 60.0,
     ) {
         val event = Event(timestamp, duration, data)
-        val msg = heartbeat(bucket_id, event.toString(), pulsetime)
-        writeFailures.record(bucket_id, msg)
+        heartbeat(bucket_id, event.toString(), pulsetime)
     }
 
-    /**
-     * Insert a discrete event by calling heartbeat() with pulsetime=0, which prevents
-     * the server from merging it with adjacent events. Prefer this over heartbeatHelper()
-     * when the session duration is already known and should be stored exactly as-is.
-     *
-     * @param bucket_id The bucket to insert the event into
-     * @param timestamp The exact start time of the event
-     * @param duration The precise duration in seconds
-     * @param data Event metadata (app name, package, etc.)
-     */
     fun insertEvent(bucket_id: String, timestamp: Instant, duration: Double, data: JSONObject) {
         val event = Event(timestamp, duration, data)
-        val msg = heartbeat(bucket_id, event.toString(), 0.0)
-        writeFailures.record(bucket_id, msg)
+        heartbeat(bucket_id, event.toString(), 0.0)
     }
 
-    /**
-     * @throws JSONException when the datastore is unavailable. The JNI reports that as
-     *   `{"error": "..."}`, which parses fine, so it is turned into an exception here;
-     *   otherwise callers would read the error object as a bucket map.
-     */
     fun getBucketsJSON(): JSONObject = parseBucketsJSON(getBuckets())
 
-    /**
-     * @throws JSONException when the datastore could not be read. The JNI reports that as
-     *   `{"error": "..."}`, which is not an event list; it used to be swallowed into an
-     *   empty array, making a failed read indistinguishable from a bucket with no events.
-     */
     fun getEventsJSON(bucket_id: String, limit: Int = 0): JSONArray =
         parseEventsJSON(getEvents(bucket_id, limit))
 
     fun getDeviceName(context: Context): String = deviceHostname(context)
 
+    private fun writeOrQueue(method: String, path: String, body: String?, action: String): String {
+        val context = appContext
+        if (context != null && RemoteRequestQueue.hasPending(context)) {
+            return queueForRetry(method, path, body, action, IllegalStateException("Earlier requests are still queued"))
+        }
+        return try {
+            RemoteAwApi.request(method, path, body)
+        } catch (e: RemoteHttpException) {
+            if (e.statusCode in 400..499 && e.statusCode !in setOf(408, 429)) {
+                RemoteAwApi.logFailure(action, e)
+                return "error: ${e.message}"
+            }
+            queueForRetry(method, path, body, action, e)
+        } catch (e: Exception) {
+            queueForRetry(method, path, body, action, e)
+        }
+    }
+
+    private fun queueForRetry(method: String, path: String, body: String?, action: String, error: Exception): String {
+        val context = appContext
+        if (context == null) {
+            RemoteAwApi.logFailure(action, error)
+            return "error: no app context; ${error.message}"
+        }
+        return try {
+            RemoteRequestQueue(context).use { it.enqueue(method, path, body) }
+            RemoteRequestQueue.schedule(context)
+            Log.w(TAG, "$action queued until Pifi is reachable")
+            "queued"
+        } catch (queueError: Exception) {
+            queueError.addSuppressed(error)
+            RemoteAwApi.logFailure("Queue $action", queueError)
+            "error: ${queueError.message}"
+        }
+    }
 }
 
-/**
- * Parses a JNI `getBuckets` response. A bucket entry is always an object, so a string
- * `error` value can only be the JNI error object.
- */
 internal fun parseBucketsJSON(response: String): JSONObject {
     val json = JSONObject(response)
     if (json.opt("error") is String) {
@@ -346,24 +169,15 @@ internal fun parseBucketsJSON(response: String): JSONObject {
     return json
 }
 
-/**
- * Parses a JNI `getEvents` response.
- *
- * An event list is always a JSON array, so an `{"error": …}` object (aw-server-rust's
- * `create_error_object`) cannot be a valid result: it is raised as a [JSONException]
- * instead of being read as an empty bucket.
- */
 internal fun parseEventsJSON(response: String): JSONArray {
     val trimmed = response.trim()
     if (trimmed.startsWith("{")) {
         val error = try {
             JSONObject(trimmed).opt("error")
-        } catch (e: JSONException) {
+        } catch (_: JSONException) {
             null
         }
-        if (error is String) {
-            throw JSONException("getEvents failed: $error")
-        }
+        if (error is String) throw JSONException("getEvents failed: $error")
     }
     return JSONArray(trimmed)
 }

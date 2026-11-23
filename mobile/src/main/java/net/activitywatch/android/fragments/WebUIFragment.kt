@@ -35,9 +35,9 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import net.activitywatch.android.ANDROID_THEME_HOOK_JS
 import net.activitywatch.android.AWPreferences
+import net.activitywatch.android.BuildConfig
 import net.activitywatch.android.R
 import net.activitywatch.android.baseURL
-import net.activitywatch.android.ensureDashboardApiKey
 import net.activitywatch.android.initialWebViewBackgroundRes
 import net.activitywatch.android.utils.startActivityOrToast
 import org.json.JSONObject
@@ -359,7 +359,7 @@ internal fun persistExportStream(cacheDir: File, input: java.io.InputStream): Fi
     return file
 }
 
-internal fun resolveEmbeddedExportUrl(url: String, baseUrl: String = "http://127.0.0.1:5600/"): String? {
+internal fun resolveEmbeddedExportUrl(url: String, baseUrl: String = "${BuildConfig.REMOTE_SERVER_URL}/"): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) {
         return null
@@ -375,7 +375,7 @@ internal fun resolveEmbeddedExportUrl(url: String, baseUrl: String = "http://127
     }
 }
 
-// The embedded server lives on loopback, so keep those navigations inside the app WebView.
+// Keep the configured Pifi ActivityWatch server and loopback URLs inside the app WebView.
 internal fun isEmbeddedActivityWatchUrl(url: String): Boolean {
     val uri = try {
         URI(url)
@@ -389,7 +389,7 @@ internal fun isEmbeddedActivityWatchUrl(url: String): Boolean {
 
     // java.net.URI.getHost() returns IPv6 addresses with brackets, e.g. "[::1]"
     return when (uri.host?.lowercase()) {
-        "localhost", "127.0.0.1", "[::1]" -> true
+        "localhost", "127.0.0.1", "[::1]", "pifi.tail1b960.ts.net" -> true
         else -> false
     }
 }
@@ -831,7 +831,7 @@ class WebUIFragment : Fragment() {
         // (and Toast) are UI-thread only.
         postToUi {
             if (!isAdded) return@postToUi
-            val base = webView?.url ?: "http://127.0.0.1:5600/"
+            val base = webView?.url ?: "${BuildConfig.REMOTE_SERVER_URL}/"
             val resolved = resolveEmbeddedExportUrl(url, base)
             if (resolved == null || !isEmbeddedActivityWatchUrl(resolved)) {
                 Log.w(TAG, "Rejected export URL: $url")
@@ -843,7 +843,6 @@ class WebUIFragment : Fragment() {
     }
 
     private fun downloadEmbeddedExport(url: String, filename: String, mimeType: String?) {
-        val token = context?.let { ensureDashboardApiKey(it) }.orEmpty()
         val cacheDir = context?.applicationContext?.cacheDir ?: return
         val safeName = sanitizeExportFilename(filename)
         val resolvedMime = inferExportMimeType(safeName, mimeType)
@@ -855,9 +854,6 @@ class WebUIFragment : Fragment() {
                     // events. Allow long gaps without holding the JSON in RAM.
                     readTimeout = 120_000
                     instanceFollowRedirects = true
-                    if (token.isNotEmpty()) {
-                        setRequestProperty("Authorization", "Bearer $token")
-                    }
                 }
                 try {
                     val code = connection.responseCode

@@ -36,7 +36,7 @@ import java.nio.charset.StandardCharsets
 
 private const val TAG = "MainActivity"
 
-val baseURL = "http://127.0.0.1:${BuildConfig.SERVER_PORT}"
+val baseURL = BuildConfig.REMOTE_SERVER_URL
 
 // Same destination as the drawer "Activity" item. Notification taps set
 // EXTRA_OPEN_ACTIVITY_VIEW so we land here instead of dashboard home.
@@ -124,7 +124,6 @@ internal fun chromeOnConfigurationChange(
 class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelectedListener, WebUIFragment.OnFragmentInteractionListener {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var dashboardApiKey: String
     private var webUiSchemeFromPage = false
     private var showingWebUi = true
 
@@ -141,7 +140,7 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         }
 
     private fun authenticatedUrl(url: String = baseURL): String {
-        return buildDashboardUrl(url, dashboardApiKey)
+        return url
     }
 
     private fun openExternalUrl(url: String) {
@@ -237,10 +236,12 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
         usw.setupAlarm()
 
         binding.navView.setNavigationItemSelectedListener(this)
+        // These two settings control an on-device API server and file sync. This build sends
+        // watcher data directly to Pifi, so neither setting applies.
+        binding.navView.menu.findItem(R.id.nav_auth_settings)?.isVisible = false
+        binding.navView.menu.findItem(R.id.nav_sync_settings)?.isVisible = false
 
-        // Ensure API key exists in config before the server starts so it picks it up at init.
-        dashboardApiKey = ensureDashboardApiKey(this)
-        // Start background service to keep server and sync running
+        // Start only Android watchers. This Pifi build has no on-device ActivityWatch server.
         val serviceIntent = Intent(this, BackgroundService::class.java).apply {
             putExtra(BackgroundService.EXTRA_START_ORIGIN, BackgroundService.START_ORIGIN_ACTIVITY)
         }
@@ -376,6 +377,8 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         // Inflate the menu; this adds items to the action bar if it is present.
         menuInflater.inflate(R.menu.main, menu)
+        menu.findItem(R.id.action_settings)?.isVisible = false
+        menu.findItem(R.id.action_sync_settings)?.isVisible = false
         return true
     }
 
@@ -418,10 +421,10 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
                 url = authenticatedUrl("$baseURL/#/settings/")
             }
             R.id.nav_auth_settings -> {
-                startActivity(Intent(this, AuthSettingsActivity::class.java))
+                // Remote server authentication is managed on Pifi.
             }
             R.id.nav_sync_settings -> {
-                startActivity(Intent(this, SyncSettingsActivity::class.java))
+                // Folder sync is not used in the direct-to-Pifi build.
             }
             R.id.nav_share -> {
                 openDashboardInBrowser()

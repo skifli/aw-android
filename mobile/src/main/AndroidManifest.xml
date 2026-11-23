@@ -92,7 +92,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="ActivityWatch runs a local HTTP server on-device to store and serve app usage data. All data stays on-device. The foreground service keeps the server continuously available so the ActivityWatch web UI remains accessible to the user. No predefined foreground service type (camera, microphone, location, health, media, etc.) covers this use case." />
+                android:value="ActivityWatch tracks Android app usage and reports it to the user's private Pifi ActivityWatch server over Tailscale. The foreground service keeps tracking available in the background." />
         </service>
 
         <receiver

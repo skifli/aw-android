@@ -1,9 +1,15 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def pifiSigningProperties = new Properties()
+def pifiSigningPropertiesFile = new File(System.getProperty('user.home'), '.config/aw-android-pifi/signing.properties')
+if (!pifiSigningPropertiesFile.isFile()) {
+    throw new GradleException("Missing private Pifi signing config: ${pifiSigningPropertiesFile}")
+}
+pifiSigningPropertiesFile.withInputStream { pifiSigningProperties.load(it) }
+
 android {
     compileSdk 36
-    ndkVersion "28.2.13676358"
 
     defaultConfig {
         applicationId "net.activitywatch.android"
@@ -21,6 +27,7 @@ android {
         // through BuildConfig so a "research" build can run side by side with
         // a normal install without contending for the same port.
         buildConfigField "int", "SERVER_PORT", "5600"
+        buildConfigField "String", "REMOTE_SERVER_URL", '"http://pifi.tail1b960.ts.net:5600"'
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // NOTE: This only works for API level 28 and above
@@ -32,6 +39,14 @@ android {
         //}
     }
     flavorDimensions "distribution"
+    signingConfigs {
+        pifiRelease {
+            storeFile file(pifiSigningProperties.getProperty('storeFile'))
+            storePassword pifiSigningProperties.getProperty('storePassword')
+            keyAlias pifiSigningProperties.getProperty('keyAlias')
+            keyPassword pifiSigningProperties.getProperty('keyPassword')
+        }
+    }
     productFlavors {
         standard {
             dimension "distribution"
@@ -47,32 +62,27 @@ android {
             buildConfigField "int", "SERVER_PORT", "5667"
             resValue "string", "app_name", "ActivityWatch Research"
         }
+        pifi {
+            dimension "distribution"
+            applicationIdSuffix ".pifi"
+            versionNameSuffix "-pifi"
+            resValue "string", "app_name", "ActivityWatch Pifi"
+        }
     }
     buildTypes {
         release {
             // Run R8: Play flags releases whose DEX optimization is below
             // its threshold ("Bad behavior -> DEX code optimization", #268).
-            // Keep rules for everything reached by name at runtime (JNI,
+            // Keep rules for everything reached by name at runtime (
             // @JavascriptInterface, WorkManager, reflective fragments) live
             // in mobile/proguard-rules.pro.
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
+            signingConfig signingConfigs.pifiRelease
         }
         debug {
             applicationIdSuffix ".debug"
-            jniDebuggable true
-            renderscriptDebuggable true
-            // Limit debug APK to modern ABIs used by CI emulators and physical devices.
-            // armeabi-v7a debug Rust binaries are very large and can corrupt the CI
-            // artifact when disk space is tight; they aren't needed for x86_64 emulator
-            // runs or any arm64-v8a device released since ~2014.
-            ndk {
-                abiFilters 'arm64-v8a', 'x86_64'
-            }
         }
     }
     compileOptions {
@@ -163,30 +173,4 @@ dependencies {
     // WorkManager
     implementation "androidx.work:work-runtime-ktx:2.9.1"
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
-}
-
-// Can be used to build with: ./gradlew cargoBuild
-// NOTE: Doesn't work, chokes on building openssl-sys
-apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
-
-cargo {
-    module  = "../aw-server-rust"       // Or whatever directory contains your Cargo.toml
-    libname = "aw_server"          // Or whatever matches Cargo.toml's [package] name.
-    targets = ["arm", "arm64", "x86", "x86_64"]  // See bellow for a longer list of options
-    profile = 'release'  // Selects the Cargo release profile (defaults to 'debug')
-}
-
-tasks.whenTaskAdded { task ->
-    // TODO: Build aw-server lib here instead of in Makefile?
-    // Doesn't work, chokes on building openssl-sys
-    //if ((task.name == 'javaPreCompileDebug' || task.name == 'javaPreCompileRelease')) {
-    //    task.dependsOn 'cargoBuild'
-    //}
-
-    // TODO: Build aw-webui here?
-    //if (task.name.contains("assembleRelease")) {
-    //    task.getDependsOn().add({
-    //        // add your logic here
-    //    })
-    //}
 }

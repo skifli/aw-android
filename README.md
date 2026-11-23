@@ -1,6 +1,30 @@
 aw-android
 ==========
 
+## Pifi remote-client build
+
+This fork is based on ActivityWatch Android `v0.14.3`. The `pifiDebug` variant is a
+remote client: its WebView and Android watchers use
+`http://pifi.tail1b960.ts.net:5600` over Tailscale. It does not start a local
+ActivityWatch server or maintain a local ActivityWatch datastore. Keep Tailscale
+connected on the phone for tracking and the in-app UI.
+
+Build with JDK 17 and Android SDK Platform 36. The release build is signed with a
+private per-device key stored outside this repository under
+`~/.local/share/aw-android-pifi/`; preserve that keystore for future in-place
+updates to the installed release.
+
+```sh
+ANDROID_HOME=/path/to/android-sdk ./gradlew :mobile:assemblePifiRelease
+```
+
+The release package id is `net.activitywatch.android.pifi`. The Pifi URL is set
+in `mobile/build.gradle` (`REMOTE_SERVER_URL`). Failed writes are stored in a
+local SQLite queue and retried by WorkManager when Android reports network
+connectivity, with a 15-minute retry pass to catch Tailscale reconnects. Retries
+are ordered and at-least-once; a server disconnect after
+committing a request but before replying can still produce a duplicate event.
+
 [![GitHub Actions badge](https://github.com/ActivityWatch/aw-android/workflows/Build/badge.svg)](https://github.com/ActivityWatch/aw-android/actions)
 [![Play Store ratings](https://PlayBadges.pavi2410.me/badge/ratings?id=net.activitywatch.android&country=us)](https://play.google.com/store/apps/details?id=net.activitywatch.android)
 
