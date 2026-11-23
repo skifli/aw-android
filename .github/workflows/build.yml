@@ -1,16 +1,9 @@
 name: Build
 
 on:
-  push:
-    branches: [ master ]
-    tags:
-      - v*
-  pull_request:
-    branches: [ master ]
+  # Pifi builds use a private local signing key and should only be run manually.
   workflow_dispatch:
     # Allows manually triggering a build on any branch or tag.
-    # Useful when RELEASE_PAT is missing and a tag push didn't auto-trigger this workflow.
-    # Usage: gh workflow run build.yml --repo ActivityWatch/aw-android --ref refs/tags/v<version>
 
 env:
   # r28+: links native libs with 16 KB page alignment by default (Play requirement since Nov 2025)
