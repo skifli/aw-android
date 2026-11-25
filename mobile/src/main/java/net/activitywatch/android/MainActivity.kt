@@ -9,6 +9,8 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
@@ -18,6 +20,7 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
@@ -159,6 +162,40 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
     private fun openBugReport() {
         val device = "${Build.MANUFACTURER} ${Build.MODEL}"
         openExternalUrl(bugReportUrl(version, Build.VERSION.RELEASE, Build.VERSION.SDK_INT, device))
+    }
+
+    private fun maybeRequestBackgroundTrackingExemption() {
+        // The private Pifi build depends on long-running background tracking. Keep
+        // upstream and research builds on their existing battery policy.
+        if (BuildConfig.FLAVOR != "pifi") return
+
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+
+        val prefs = AWPreferences(this)
+        if (prefs.hasShownBatteryOptimizationPrompt()) return
+        prefs.setBatteryOptimizationPromptShown()
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_tracking_battery_title)
+            .setMessage(R.string.background_tracking_battery_message)
+            .setPositiveButton(R.string.background_tracking_battery_continue) { _, _ ->
+                val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                try {
+                    startActivity(request)
+                } catch (e: ActivityNotFoundException) {
+                    Log.w(TAG, "Battery exemption prompt unavailable; opening battery settings", e)
+                    try {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    } catch (fallback: ActivityNotFoundException) {
+                        Log.w(TAG, "Battery optimization settings unavailable", fallback)
+                    }
+                }
+            }
+            .setNegativeButton(R.string.background_tracking_battery_later, null)
+            .show()
     }
 
     override fun onFragmentInteraction(item: Uri) {
@@ -327,6 +364,8 @@ class MainActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelecte
 
     override fun onResume() {
         super.onResume()
+
+        maybeRequestBackgroundTrackingExemption()
 
         // Notification tap on a stopped/restored instance: replace after the
         // FragmentManager is ready. Cold start and resumed delivery already

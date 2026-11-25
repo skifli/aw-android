@@ -132,6 +132,14 @@ class RustInterface(context: Context? = null) {
         return try {
             RemoteAwApi.request(method, path, body)
         } catch (e: RemoteHttpException) {
+            if (e.statusCode == 304 && isBucketCreate(method, path)) {
+                Log.i(TAG, "Remote bucket already exists; treating create as complete")
+                return "ok"
+            }
+            if (e.statusCode in 300..399) {
+                RemoteAwApi.logFailure(action, e)
+                return "error: ${e.message}"
+            }
             if (e.statusCode in 400..499 && e.statusCode !in setOf(408, 429)) {
                 RemoteAwApi.logFailure(action, e)
                 return "error: ${e.message}"
@@ -151,7 +159,10 @@ class RustInterface(context: Context? = null) {
         return try {
             RemoteRequestQueue(context).use { it.enqueue(method, path, body) }
             RemoteRequestQueue.schedule(context)
-            Log.w(TAG, "$action queued until Pifi is reachable")
+            Log.w(
+                TAG,
+                "$action queued until Pifi is reachable; ${error.javaClass.simpleName}: ${error.message}",
+            )
             "queued"
         } catch (queueError: Exception) {
             queueError.addSuppressed(error)

@@ -47,6 +47,10 @@
     <!-- Auth strings -->
     <string name="no_browser_found">No browser app available to open this URL</string>
     <string name="settings_screen_unavailable">This settings screen is not available on this device. Open Settings manually to grant the permission.</string>
+    <string name="background_tracking_battery_title">Keep ActivityWatch tracking in the background?</string>
+    <string name="background_tracking_battery_message">ActivityWatch Pifi logs app and media activity while you use your phone. Allowing it to run without battery optimization can help keep tracking active when the screen is off. Android still controls the service, and you can change this later in system settings.</string>
+    <string name="background_tracking_battery_continue">Open system prompt</string>
+    <string name="background_tracking_battery_later">Not now</string>
     <string name="export_saved">Saved %1$s</string>
     <string name="export_save_failed">Could not save export</string>
 </resources>

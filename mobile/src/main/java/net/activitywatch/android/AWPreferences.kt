@@ -92,6 +92,13 @@ class AWPreferences(context: Context) {
         sharedPreferences.edit().putBoolean("hasRequestedNotificationPermission", true).apply()
     }
 
+    fun hasShownBatteryOptimizationPrompt(): Boolean =
+        sharedPreferences.getBoolean("hasShownBatteryOptimizationPrompt", false)
+
+    fun setBatteryOptimizationPromptShown() {
+        sharedPreferences.edit().putBoolean("hasShownBatteryOptimizationPrompt", true).apply()
+    }
+
     // Sync is off by default; user must explicitly enable it once a sync directory
     // is configured (e.g. via Storage Access Framework).
     fun isSyncEnabled(): Boolean {

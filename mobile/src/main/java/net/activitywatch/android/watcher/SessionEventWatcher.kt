@@ -3,6 +3,7 @@ package net.activitywatch.android.watcher
 import android.content.Context
 import android.util.Log
 import net.activitywatch.android.OffThreadInit
+import net.activitywatch.android.RemoteRequestQueue
 import net.activitywatch.android.RustInterface
 import net.activitywatch.android.data.AppSession
 import net.activitywatch.android.parser.SessionParser
@@ -112,6 +113,10 @@ class SessionEventWatcher(val context: Context) {
     }
 
     private fun processEventsSinceLastUpdateLocked(): Int {
+        if (RemoteRequestQueue.hasPending(context)) {
+            Log.i(TAG, "Skipping session scan while remote uploads are queued; Android history will be scanned again after they drain")
+            return 0
+        }
         val ri = rustInterface() ?: run {
             Log.w(TAG, "RustInterface not ready; skipping session event processing")
             return 0
@@ -119,9 +124,8 @@ class SessionEventWatcher(val context: Context) {
         Log.i(TAG, "Processing session events...")
 
         // Create bucket for session events
-        ri.createBucketsHelper(
-            mapOf(SESSION_BUCKET_ID to "currentwindow", UNLOCK_BUCKET_ID to "os.lockscreen.unlocks")
-        )
+        ri.createBucketHelper(SESSION_BUCKET_ID, "currentwindow")
+        ri.createBucketHelper(UNLOCK_BUCKET_ID, "os.lockscreen.unlocks")
 
         // Read both cursors before changing state or querying Android history. A failed
         // lookup is not an empty bucket: skip this batch rather than replay from zero.

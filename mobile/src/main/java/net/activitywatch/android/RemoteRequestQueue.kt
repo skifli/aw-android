@@ -76,6 +76,17 @@ internal class RemoteRequestQueue(context: Context) : SQLiteOpenHelper(
         if (it.moveToFirst()) it.getLong(0) else 0
     }
 
+    fun removeExactDuplicates(): Long {
+        val before = count()
+        writableDatabase.execSQL(
+            """DELETE FROM pending_requests
+               WHERE id NOT IN (
+                   SELECT MIN(id) FROM pending_requests GROUP BY method, path, body
+               )""".trimIndent(),
+        )
+        return before - count()
+    }
+
     companion object {
         fun hasPending(context: Context): Boolean =
             RemoteRequestQueue(context).use { it.count() > 0 }
@@ -91,6 +102,26 @@ internal class RemoteRequestQueue(context: Context) : SQLiteOpenHelper(
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 QUEUE_WORK_NAME,
                 ExistingWorkPolicy.KEEP,
+                work,
+            )
+        }
+
+        /** Reset an old, heavily backed-off drain when the foreground service starts. */
+        fun restartDrain(context: Context) {
+            val duplicates = RemoteRequestQueue(context).use { it.removeExactDuplicates() }
+            if (duplicates > 0) Log.i(TAG, "Removed $duplicates identical duplicate request(s) from the pending queue")
+            if (!hasPending(context)) return
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            val work = OneTimeWorkRequestBuilder<RemoteQueueWorker>()
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            Log.i(TAG, "Restarting delayed queue drain because pending uploads remain")
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                QUEUE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
                 work,
             )
         }
@@ -117,13 +148,22 @@ internal class RemoteQueueWorker(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         RemoteRequestQueue(applicationContext).use { queue ->
+            Log.i(TAG, "Starting queue drain with ${queue.count()} pending request(s)")
+            var processed = 0
             while (true) {
                 val pending = queue.next() ?: return Result.success()
                 try {
                     RemoteAwApi.request(pending.method, pending.path, pending.body)
                     queue.remove(pending.id)
+                    processed++
+                    if (processed % 500 == 0) {
+                        Log.i(TAG, "Drained $processed request(s); ${queue.count()} remain")
+                    }
                 } catch (e: RemoteHttpException) {
-                    if (e.statusCode in 400..499 && e.statusCode !in setOf(408, 429)) {
+                    if (e.statusCode == 304 && isBucketCreate(pending.method, pending.path)) {
+                        Log.i(TAG, "Bucket already exists; treating queued create as complete")
+                        queue.remove(pending.id)
+                    } else if (e.statusCode in 300..399 || (e.statusCode in 400..499 && e.statusCode !in setOf(408, 429))) {
                         Log.e(TAG, "Dropping permanently rejected queued request ${pending.id}: ${e.message}")
                         queue.remove(pending.id)
                     } else {
@@ -138,3 +178,8 @@ internal class RemoteQueueWorker(
         }
     }
 }
+
+internal fun isBucketCreate(method: String, path: String): Boolean =
+    method == "POST" && path.startsWith("/api/0/buckets/") &&
+        path.removePrefix("/api/0/buckets/").isNotBlank() &&
+        !path.removePrefix("/api/0/buckets/").contains('/')

@@ -171,6 +171,7 @@ class BackgroundService : Service() {
 
         syncScheduler.stop()
         RemoteRequestQueue.schedulePeriodic(this)
+        RemoteRequestQueue.restartDrain(this)
         Log.i(TAG, "File sync is disabled in direct-to-Pifi mode")
 
         // Schedule event parsing
